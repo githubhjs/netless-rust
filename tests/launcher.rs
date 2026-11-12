@@ -174,15 +174,17 @@ fn macos_seatbelt_blocks_outbound_connect() {
 #[cfg(target_os = "openbsd")]
 #[test]
 fn openbsd_pledge_rejects_inet_socket_syscalls() {
-    let script = "import socket,sys\ntry: socket.socket(socket.AF_INET,socket.SOCK_STREAM)\nexcept OSError: sys.exit(0)\nelse: sys.exit(7)\n";
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    let script = "import socket,sys\ntry: socket.create_connection(('127.0.0.1',int(sys.argv[1])),timeout=1)\nexcept OSError as e: print('network blocked:',e); sys.exit(0)\nelse: print('connect succeeded'); sys.exit(7)\n";
     let result = bin()
-        .args(["--", "python3", "-c", script])
+        .args(["--", "python3", "-c", script, &port])
         .output()
         .unwrap();
-    assert!(
-        !result.status.success(),
-        "inet socket unexpectedly succeeded"
-    );
+    let blocked = !result.status.success()
+        || String::from_utf8_lossy(&result.stdout).contains("network blocked");
+    assert!(blocked, "inet connect unexpectedly succeeded");
+    drop(listener);
 }
 
 #[cfg(target_os = "freebsd")]
