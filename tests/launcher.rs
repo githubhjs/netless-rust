@@ -124,6 +124,23 @@ fn bubblewrap_mode_uses_a_distinct_network_namespace() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn bubblewrap_mode_fails_closed_when_helper_is_missing() {
+    let temp = std::env::temp_dir().join(format!("netless-test-{}", std::process::id()));
+    std::fs::create_dir_all(&temp).unwrap();
+    let marker = temp.join("target-ran");
+    let result = bin()
+        .env("PATH", &temp)
+        .args(["--network-namespace", "--", "/usr/bin/touch"])
+        .arg(&marker)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(127));
+    assert!(!marker.exists(), "target ran without bubblewrap");
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_seatbelt_rejects_socket_creation() {
