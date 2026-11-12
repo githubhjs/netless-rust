@@ -11,7 +11,13 @@ fn help_and_argument_errors_are_clear() {
     let help = bin().arg("--help").output().unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("OS-enforced network restrictions"));
+    #[cfg(not(windows))]
     let bad = bin().args(["--", "true"]).output().unwrap();
+    #[cfg(windows)]
+    let bad = bin()
+        .args(["--", "cmd.exe", "/d", "/c", "exit 0"])
+        .output()
+        .unwrap();
     assert!(bad.status.success());
     let missing = bin().output().unwrap();
     assert_eq!(missing.status.code(), Some(2));
@@ -143,22 +149,28 @@ fn bubblewrap_mode_fails_closed_when_helper_is_missing() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn macos_seatbelt_rejects_socket_creation() {
+fn macos_seatbelt_blocks_outbound_connect() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let port = address.port().to_string();
+    let script = "import socket,sys\ntry: socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=1)\nexcept OSError as e: print('connection blocked:',e); sys.exit(0)\nelse: print('connection succeeded'); sys.exit(7)\n";
     let result = bin()
-        .args(["--", "python3", "-c", "import socket; socket.socket()"])
+        .args(["--", "python3", "-c", script, "127.0.0.1", &port])
         .output()
         .unwrap();
     assert!(
-        !result.status.success(),
-        "socket creation unexpectedly succeeded"
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stdout)
     );
+    drop(listener);
 }
 
 #[cfg(windows)]
 #[test]
 fn appcontainer_launches_command_and_propagates_exit_status() {
     let result = bin()
-        .args(["--", "cmd.exe", "/d", "/c", "exit", "23"])
+        .args(["--", "cmd.exe", "/d", "/c", "exit 23"])
         .output()
         .unwrap();
     assert_eq!(
