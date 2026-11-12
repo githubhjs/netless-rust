@@ -1,0 +1,89 @@
+name: test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            musl: x86_64-unknown-linux-musl
+            asset: linux-x86_64
+          - runner: ubuntu-22.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            musl: aarch64-unknown-linux-musl
+            asset: linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.musl }}
+      - name: Install bubblewrap for the namespace isolation test
+        if: matrix.runner == 'ubuntu-22.04' || matrix.runner == 'ubuntu-22.04-arm'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Build and test GNU target
+        run: cargo test --locked --target ${{ matrix.rust_target }}
+      - name: Build and test static musl target
+        run: |
+          docker run --rm -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v "$PWD:/src" -w /src rust:1-alpine sh -ec 'apk add --no-cache musl-dev python3; cargo test --locked; cargo build --release --locked; cp target/release/netless /src/netless-musl; chown -R "$HOST_UID:$HOST_GID" /src/target /src/netless-musl'
+      - name: CentOS userland and legacy-kernel behavior
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          for version in 6 7 8; do docker run --rm --entrypoint /bin/sh -v "$PWD/netless-musl:/netless:ro" "quay.io/centos/centos:$version" -ec '/netless -- /bin/true'; done
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo test --locked --target ${{ matrix.target }}
+  openbsd:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/openbsd-vm@v1
+        with:
+          prepare: pkg_add rust
+          run: cargo test --locked
+  freebsd:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          prepare: pkg install -y rust
+          run: cargo test --locked
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Grant AppContainer access to test executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target | Out-Null
+          icacls.exe target /grant '*S-1-15-2-1:(OI)(CI)RX' /T | Out-Null
+      - run: cargo test --locked --target ${{ matrix.target }}

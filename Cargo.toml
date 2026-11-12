@@ -1,0 +1,20 @@
+[package]
+name = "netless"
+version = "0.1.0"
+edition = "2024"
+description = "OS-enforced network isolation for command trees"
+license = "MIT"
+repository = "https://github.com/githubhjs/netless-rust"
+readme = "README.md"
+
+[dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Isolation", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_Console"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

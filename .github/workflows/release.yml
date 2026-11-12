@@ -1,0 +1,121 @@
+name: release
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: write
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset: netless-rust-linux-x86_64
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: netless-rust-linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo test --locked --target ${{ matrix.target }} && cargo build --release --locked --target ${{ matrix.target }}
+      - run: tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release netless
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.tar.gz
+      - name: Build static musl release
+        run: docker run --rm -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v "$PWD:/src" -w /src rust:1-alpine sh -ec 'apk add --no-cache musl-dev; cargo build --release --locked; cp target/release/netless /src/netless-musl; chown -R "$HOST_UID:$HOST_GID" /src/target /src/netless-musl'
+      - run: tar -czf ${{ matrix.asset }}-musl-static.tar.gz netless-musl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}-musl-static
+          path: ${{ matrix.asset }}-musl-static.tar.gz
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: netless-rust-macos-x86_64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            asset: netless-rust-macos-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo test --locked --target ${{ matrix.target }} && cargo build --release --locked --target ${{ matrix.target }}
+      - run: tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release netless
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.tar.gz
+  openbsd:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/openbsd-vm@v1
+        with:
+          prepare: pkg_add rust
+          run: cargo test --locked && cargo build --release --locked && tar -czf netless-rust-openbsd-x86_64.tar.gz -C target/release netless
+          copyback: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netless-rust-openbsd-x86_64
+          path: netless-rust-openbsd-x86_64.tar.gz
+  freebsd:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          prepare: pkg install -y rust
+          run: cargo test --locked && cargo build --release --locked && tar -czf netless-rust-freebsd-x86_64-best-effort.tar.gz -C target/release netless
+          copyback: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netless-rust-freebsd-x86_64-best-effort
+          path: netless-rust-freebsd-x86_64-best-effort.tar.gz
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            asset: netless-rust-windows-x86_64-best-effort
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            asset: netless-rust-windows-aarch64-best-effort
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - shell: pwsh
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/netless.exe -DestinationPath '${{ matrix.asset }}.zip'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.zip
+  publish:
+    needs: [linux, macos, openbsd, freebsd, windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
