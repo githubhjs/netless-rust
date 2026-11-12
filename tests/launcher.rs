@@ -15,7 +15,12 @@ fn help_and_argument_errors_are_clear() {
     let bad = bin().args(["--", "true"]).output().unwrap();
     #[cfg(windows)]
     let bad = bin()
-        .args(["--", "cmd.exe", "/d", "/c", "exit 0"])
+        .args([
+            "--",
+            env!("CARGO_BIN_EXE_network_probe"),
+            "--exit-code",
+            "0",
+        ])
         .output()
         .unwrap();
     assert!(bad.status.success());
@@ -166,11 +171,46 @@ fn macos_seatbelt_blocks_outbound_connect() {
     drop(listener);
 }
 
+#[cfg(target_os = "openbsd")]
+#[test]
+fn openbsd_pledge_rejects_inet_socket_syscalls() {
+    let script = "import socket,sys\ntry: socket.socket(socket.AF_INET,socket.SOCK_STREAM)\nexcept OSError: sys.exit(0)\nelse: sys.exit(7)\n";
+    let result = bin()
+        .args(["--", "python3", "-c", script])
+        .output()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "inet socket unexpectedly succeeded"
+    );
+}
+
+#[cfg(target_os = "freebsd")]
+#[test]
+fn freebsd_jail_cannot_connect_outside_its_ip_isolation() {
+    let script = "import socket,sys\ntry: socket.create_connection(('1.1.1.1',53),timeout=1)\nexcept OSError as e: print('network blocked:',e); sys.exit(0)\nelse: sys.exit(7)\n";
+    let result = bin()
+        .args(["--", "python3", "-c", script])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn appcontainer_launches_command_and_propagates_exit_status() {
     let result = bin()
-        .args(["--", "cmd.exe", "/d", "/c", "exit 23"])
+        .args([
+            "--",
+            env!("CARGO_BIN_EXE_network_probe"),
+            "--exit-code",
+            "23",
+        ])
         .output()
         .unwrap();
     assert_eq!(
